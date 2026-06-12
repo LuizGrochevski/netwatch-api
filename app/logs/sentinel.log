@@ -1,0 +1,6 @@
+2026-06-12T19:15:01.614928Z  INFO sentinel_rs: Sentinel-RS inicializado com sucesso.
+2026-06-12T19:15:01.651488Z DEBUG sentinel_rs::network::arp: O comando 'ip neighbor' retornou status de erro
+2026-06-12T19:15:01.652551Z DEBUG sentinel_rs::network::scanner: Worker processando alvo: 192.168.0.1:22
+2026-06-12T19:15:01.653707Z DEBUG sentinel_rs::network::scanner: Worker processando alvo: 192.168.0.1:80
+2026-06-12T19:15:01.654754Z DEBUG sentinel_rs::network::scanner: Worker processando alvo: 192.168.0.1:443
+2026-06-12T19:15:01.756108Z  WARN sentinel_rs: Nenhum resultado capturado para exportar.

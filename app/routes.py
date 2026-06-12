@@ -3,8 +3,8 @@ from fastapi.security import OAuth2PasswordRequestForm
 from app.models import UserCreate, Token, ScanRequest
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 from app.database import get_connection
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import json, socket
+from app.scanner import run_sentinel
+import json
 
 router = APIRouter()
 
@@ -35,45 +35,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 # --- SCANS ---
 
-def scan_target(target: str) -> dict:
-    result = {"target": target, "open_ports": [], "hostname": None, "error": None}
-    try:
-        result["hostname"] = socket.gethostbyname(target)
-    except socket.gaierror:
-        result["error"] = "Host unreachable"
-        return result
-    ports = [21, 22, 23, 25, 53, 80, 443, 3306, 5432, 6379, 8080]
-    def check_port(port):
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.5)
-            if sock.connect_ex((result["hostname"], port)) == 0:
-                return port
-            sock.close()
-        except:
-            pass
-        return None
-    with ThreadPoolExecutor(max_workers=len(ports)) as executor:
-        futures = {executor.submit(check_port, p): p for p in ports}
-        for future in as_completed(futures):
-            port = future.result()
-            if port:
-                result["open_ports"].append(port)
-    result["open_ports"].sort()
-    return result
-
-def parallel_scan(targets: list) -> list:
-    results = [None] * len(targets)
-    with ThreadPoolExecutor(max_workers=min(len(targets), 10)) as executor:
-        futures = {executor.submit(scan_target, t): i for i, t in enumerate(targets)}
-        for future in as_completed(futures):
-            idx = futures[future]
-            results[idx] = future.result()
-    return results
-
 @router.post("/scan", status_code=202)
 def create_scan(scan: ScanRequest, current_user: dict = Depends(get_current_user)):
-    results = parallel_scan(scan.targets)
+    results = run_sentinel(scan.targets)
     conn = get_connection()
     cursor = conn.execute(
         "INSERT INTO scans (user_id, targets, status, results) VALUES (?, ?, ?, ?)",
