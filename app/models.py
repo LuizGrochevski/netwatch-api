@@ -11,6 +11,8 @@ class Token(BaseModel):
 
 class ScanRequest(BaseModel):
     targets: List[str]
+    ports: Optional[str] = "21,22,23,25,53,80,443,3306,5432,6379,8080"
+    protocol: Optional[str] = "tcp"
 
 class ScanResponse(BaseModel):
     id: int

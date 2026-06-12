@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from app.models import UserCreate, Token, ScanRequest
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
@@ -37,7 +37,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 @router.post("/scan", status_code=202)
 def create_scan(scan: ScanRequest, current_user: dict = Depends(get_current_user)):
-    results = run_sentinel(scan.targets)
+    results = run_sentinel(scan.targets, scan.ports, scan.protocol)
     conn = get_connection()
     cursor = conn.execute(
         "INSERT INTO scans (user_id, targets, status, results) VALUES (?, ?, ?, ?)",
@@ -63,6 +63,49 @@ def get_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
         "targets": json.loads(scan["targets"]),
         "status": scan["status"],
         "results": json.loads(scan["results"]),
+        "created_at": scan["created_at"]
+    }
+
+@router.get("/scan/{scan_id}/report")
+def get_scan_report(scan_id: int, format: str = "json", current_user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    scan = conn.execute(
+        "SELECT * FROM scans WHERE id = ? AND user_id = ?",
+        (scan_id, current_user["id"])
+    ).fetchone()
+    conn.close()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan não encontrado")
+
+    results = json.loads(scan["results"])
+
+    if format == "csv":
+        lines = ["target,port,service,status,protocol,error"]
+        for r in results:
+            if r["open_ports"]:
+                for p in r["open_ports"]:
+                    lines.append(f"{r['target']},{p['port']},{p['service']},{p['status']},{r.get('protocol','tcp')},")
+            else:
+                lines.append(f"{r['target']},,,,{r.get('protocol','tcp')},{r.get('error','')}")
+        return Response(content="\n".join(lines), media_type="text/csv",
+                       headers={"Content-Disposition": f"attachment; filename=scan_{scan_id}.csv"})
+
+    elif format == "markdown":
+        lines = [f"# Scan Report #{scan_id}\n", "| Target | Port | Service | Status | Protocol |", "|---|---|---|---|---|"]
+        for r in results:
+            if r["open_ports"]:
+                for p in r["open_ports"]:
+                    lines.append(f"| {r['target']} | {p['port']} | {p['service']} | {p['status']} | {r.get('protocol','tcp')} |")
+            else:
+                lines.append(f"| {r['target']} | - | - | {r.get('error','no ports found')} | {r.get('protocol','tcp')} |")
+        return Response(content="\n".join(lines), media_type="text/markdown",
+                       headers={"Content-Disposition": f"attachment; filename=scan_{scan_id}.md"})
+
+    return {
+        "id": scan["id"],
+        "targets": json.loads(scan["targets"]),
+        "status": scan["status"],
+        "results": results,
         "created_at": scan["created_at"]
     }
 
