@@ -1,0 +1,10 @@
+services:
+  netwatch-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./netwatch.db:/app/netwatch.db
+    env_file:
+      - .env
+    restart: unless-stopped
