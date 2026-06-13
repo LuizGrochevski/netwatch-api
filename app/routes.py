@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from app.models import UserCreate, Token, ScanRequest
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
@@ -66,6 +66,21 @@ def get_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
         "created_at": scan["created_at"]
     }
 
+@router.delete("/scan/{scan_id}", status_code=200)
+def delete_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    scan = conn.execute(
+        "SELECT id FROM scans WHERE id = ? AND user_id = ?",
+        (scan_id, current_user["id"])
+    ).fetchone()
+    if not scan:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Scan não encontrado")
+    conn.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
+    conn.commit()
+    conn.close()
+    return {"message": f"Scan {scan_id} deletado com sucesso"}
+
 @router.get("/scan/{scan_id}/report")
 def get_scan_report(scan_id: int, format: str = "json", current_user: dict = Depends(get_current_user)):
     conn = get_connection()
@@ -110,22 +125,37 @@ def get_scan_report(scan_id: int, format: str = "json", current_user: dict = Dep
     }
 
 @router.get("/history")
-def get_history(current_user: dict = Depends(get_current_user)):
+def get_history(
+    current_user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(10, ge=1, le=100, description="Itens por página")
+):
+    offset = (page - 1) * limit
     conn = get_connection()
-    scans = conn.execute(
-        "SELECT id, targets, status, created_at FROM scans WHERE user_id = ? ORDER BY created_at DESC",
+    total = conn.execute(
+        "SELECT COUNT(*) FROM scans WHERE user_id = ?",
         (current_user["id"],)
+    ).fetchone()[0]
+    scans = conn.execute(
+        "SELECT id, targets, status, created_at FROM scans WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (current_user["id"], limit, offset)
     ).fetchall()
     conn.close()
-    return [
-        {
-            "id": s["id"],
-            "targets": json.loads(s["targets"]),
-            "status": s["status"],
-            "created_at": s["created_at"]
-        }
-        for s in scans
-    ]
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "pages": (total + limit - 1) // limit,
+        "data": [
+            {
+                "id": s["id"],
+                "targets": json.loads(s["targets"]),
+                "status": s["status"],
+                "created_at": s["created_at"]
+            }
+            for s in scans
+        ]
+    }
 
 # --- USER ---
 

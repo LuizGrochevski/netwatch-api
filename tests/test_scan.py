@@ -150,4 +150,56 @@ def test_history(mock_sentinel, auth_token):
     client.post("/scan", json={"targets": ["192.168.0.1"]}, headers={"Authorization": f"Bearer {auth_token}"})
     res = client.get("/history", headers={"Authorization": f"Bearer {auth_token}"})
     assert res.status_code == 200
-    assert len(res.json()) == 2
+    assert len(res.json()["data"]) == 2
+
+@patch("app.routes.run_sentinel", return_value=MOCK_SCAN_RESULT)
+def test_delete_scan(mock_sentinel, auth_token):
+    post = client.post(
+        "/scan",
+        json={"targets": ["192.168.0.1"]},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    scan_id = post.json()["id"]
+    res = client.delete(f"/scan/{scan_id}", headers={"Authorization": f"Bearer {auth_token}"})
+    assert res.status_code == 200
+    assert "deletado" in res.json()["message"]
+
+@patch("app.routes.run_sentinel", return_value=MOCK_SCAN_RESULT)
+def test_delete_scan_not_found(mock_sentinel, auth_token):
+    res = client.delete("/scan/9999", headers={"Authorization": f"Bearer {auth_token}"})
+    assert res.status_code == 404
+
+@patch("app.routes.run_sentinel", return_value=MOCK_SCAN_RESULT)
+def test_delete_scan_removes_from_history(mock_sentinel, auth_token):
+    post = client.post(
+        "/scan",
+        json={"targets": ["192.168.0.1"]},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    scan_id = post.json()["id"]
+    client.delete(f"/scan/{scan_id}", headers={"Authorization": f"Bearer {auth_token}"})
+    res = client.get("/history", headers={"Authorization": f"Bearer {auth_token}"})
+    ids = [s["id"] for s in res.json()["data"]]
+    assert scan_id not in ids
+
+@patch("app.routes.run_sentinel", return_value=MOCK_SCAN_RESULT)
+def test_history_paginacao(mock_sentinel, auth_token):
+    for _ in range(5):
+        client.post("/scan", json={"targets": ["192.168.0.1"]}, headers={"Authorization": f"Bearer {auth_token}"})
+    res = client.get("/history?page=1&limit=3", headers={"Authorization": f"Bearer {auth_token}"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["page"] == 1
+    assert data["limit"] == 3
+    assert data["total"] == 5
+    assert data["pages"] == 2
+    assert len(data["data"]) == 3
+
+@patch("app.routes.run_sentinel", return_value=MOCK_SCAN_RESULT)
+def test_history_pagina_2(mock_sentinel, auth_token):
+    for _ in range(5):
+        client.post("/scan", json={"targets": ["192.168.0.1"]}, headers={"Authorization": f"Bearer {auth_token}"})
+    res = client.get("/history?page=2&limit=3", headers={"Authorization": f"Bearer {auth_token}"})
+    data = res.json()
+    assert data["page"] == 2
+    assert len(data["data"]) == 2
