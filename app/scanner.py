@@ -2,15 +2,21 @@ import subprocess
 import tempfile
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SENTINEL_BIN = os.path.expanduser("~/sentinel-rs/target/release/sentinel-rs")
 DEFAULT_PORTS = "21,22,23,25,53,80,443,3306,5432,6379,8080"
 
 def run_sentinel(targets: list, ports: str = DEFAULT_PORTS, protocol: str = "tcp") -> list:
-    results = []
-    for target in targets:
-        result = _scan_target(target, ports, protocol)
-        results.append(result)
+    if len(targets) == 1:
+        return [_scan_target(targets[0], ports, protocol)]
+
+    results = [None] * len(targets)
+    with ThreadPoolExecutor(max_workers=min(len(targets), 5)) as executor:
+        futures = {executor.submit(_scan_target, t, ports, protocol): i for i, t in enumerate(targets)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
     return results
 
 def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
