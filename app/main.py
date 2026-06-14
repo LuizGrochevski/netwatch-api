@@ -19,4 +19,22 @@ app.include_router(router)
 
 @app.get("/")
 def root():
-    return {"message": "Netwatch API online", "docs": "/docs"}
+    return {
+        "name": "Netwatch API",
+        "version": "1.0.0",
+        "status": "online",
+        "engine": "sentinel-rs",
+        "docs": "/docs",
+        "endpoints": {
+            "auth": ["/auth/register", "/auth/login"],
+            "user": ["/me"],
+            "scan": ["/scan", "/scan/{id}", "/scan/{id}/report"],
+            "history": ["/history"]
+        },
+        "usage": {
+            "1_register": "POST /auth/register",
+            "2_login": "POST /auth/login",
+            "3_scan": "POST /scan {targets, ports, protocol}",
+            "4_report": "GET /scan/{id}/report?format=csv|markdown"
+        }
+    }
