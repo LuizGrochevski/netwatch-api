@@ -3,7 +3,9 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-SENTINEL_BIN = "/usr/local/bin/sentinel-rs"
+import os
+
+SENTINEL_BIN = os.environ.get("SENTINEL_BIN_PATH", "/usr/local/bin/sentinel-rs")
 DEFAULT_PORTS = "21,22,23,25,53,80,443,3306,5432,6379,8080"
 
 def run_sentinel(targets: list, ports: str = DEFAULT_PORTS, protocol: str = "tcp") -> list:
@@ -22,8 +24,9 @@ def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
     # 1. Tenta rodar com performance máxima usando SYN Scan
     result = _execute_sentinel_command(target, ports, protocol, use_syn=True)
     
-    # 2. Fallback: Se deu erro de privilégio/unreachable no TCP, tenta o Connect Scan clássico
-    if protocol.lower() == "tcp" and (result.get("error") == "Host unreachable or no ports found" or "permission" in str(result.get("error")).lower()):
+    # 2. Fallback: Se o SYN scan não achou nenhuma porta aberta (qualquer motivo: erro,
+    #    permissão, ping/host discovery falho), tenta o Connect Scan clássico via TCP.
+    if protocol.lower() == "tcp" and not result.get("open_ports"):
         result_fallback = _execute_sentinel_command(target, ports, protocol, use_syn=False)
         if result_fallback.get("error") is None or len(result_fallback.get("open_ports", [])) > 0:
             return result_fallback
