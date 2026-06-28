@@ -1,0 +1,5 @@
+2026-06-28T18:21:53.833239Z  INFO sentinel_rs: Sentinel-RS inicializado com sucesso. version="0.1.0" target=192.168.0.1 protocol="tcp" stdout_mode=true
+2026-06-28T18:21:53.833396Z DEBUG sentinel_rs: Configuração do scan carregada. ports=80,443 threads=100 timeout_ms=100 retries=1 reverse_dns=false
+2026-06-28T18:21:53.860072Z DEBUG sentinel_rs::network::scanner: Worker processando alvo. ip=192.168.0.1 porta=80
+2026-06-28T18:21:53.863009Z DEBUG sentinel_rs::network::scanner: Worker processando alvo. ip=192.168.0.1 porta=443
+2026-06-28T18:21:53.985254Z  INFO sentinel_rs: Scan finalizado com sucesso! target=192.168.0.1 total_portas_abertas=1
