@@ -4,6 +4,7 @@ from app.models import UserCreate, Token, ScanRequest
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 from app.database import get_connection
 from app.scanner import run_sentinel
+from app.cve import search_cves, extract_services
 import json
 
 router = APIRouter()
@@ -166,3 +167,41 @@ def get_me(current_user: dict = Depends(get_current_user)):
         "username": current_user["username"],
         "created_at": current_user["created_at"]
     }
+
+# --- CVE LOOKUP ---
+
+@router.get("/cves")
+def lookup_cves(
+    service: str = Query(..., description="Nome do serviço/produto a buscar (ex: openssh, apache, log4j)"),
+    limit: int = Query(10, ge=1, le=50, description="Número máximo de CVEs retornados"),
+    days: int = Query(119, ge=1, le=119, description="Janela de dias para publicação (máx 119)")
+):
+    results = search_cves(service, limit, days)
+    return {"service": service, "count": len(results), "cves": results}
+
+
+@router.get("/scan/{scan_id}/cves")
+def get_scan_cves(
+    scan_id: int,
+    limit: int = Query(5, ge=1, le=50, description="Número máximo de CVEs por serviço"),
+    current_user: dict = Depends(get_current_user)
+):
+    conn = get_connection()
+    scan = conn.execute(
+        "SELECT * FROM scans WHERE id = ? AND user_id = ?",
+        (scan_id, current_user["id"])
+    ).fetchone()
+    conn.close()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan não encontrado")
+
+    results = json.loads(scan["results"])
+    services = extract_services(results)
+
+    if not services:
+        return {"scan_id": scan_id, "services": [], "cves": {}}
+
+    cves_by_service = {
+        service: search_cves(service, limit) for service in services
+    }
+    return {"scan_id": scan_id, "services": services, "cves": cves_by_service}
