@@ -1,10 +1,16 @@
 services:
   netwatch-api:
     build: .
-    ports:
-      - "8000:8000"
+    network_mode: "host"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./netwatch.db:/app/netwatch.db
+      - /home/luiz-felipe/Documentos/projetos/Sentinel-RS/target/release/sentinel-rs:/usr/local/bin/sentinel-rs
     env_file:
       - .env
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     restart: unless-stopped

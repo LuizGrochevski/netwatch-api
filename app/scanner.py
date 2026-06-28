@@ -3,7 +3,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-SENTINEL_BIN = os.path.expanduser("~/sentinel-rs/target/release/sentinel-rs")
+SENTINEL_BIN = "/usr/local/bin/sentinel-rs"
 DEFAULT_PORTS = "21,22,23,25,53,80,443,3306,5432,6379,8080"
 
 def run_sentinel(targets: list, ports: str = DEFAULT_PORTS, protocol: str = "tcp") -> list:
@@ -19,10 +19,25 @@ def run_sentinel(targets: list, ports: str = DEFAULT_PORTS, protocol: str = "tcp
     return results
 
 def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
+    # 1. Tenta rodar com performance máxima usando SYN Scan
+    result = _execute_sentinel_command(target, ports, protocol, use_syn=True)
+    
+    # 2. Fallback: Se deu erro de privilégio/unreachable no TCP, tenta o Connect Scan clássico
+    if protocol.lower() == "tcp" and (result.get("error") == "Host unreachable or no ports found" or "permission" in str(result.get("error")).lower()):
+        result_fallback = _execute_sentinel_command(target, ports, protocol, use_syn=False)
+        if result_fallback.get("error") is None or len(result_fallback.get("open_ports", [])) > 0:
+            return result_fallback
+
+    return result
+
+def _execute_sentinel_command(target: str, ports: str, protocol: str, use_syn: bool) -> dict:
     try:
         cmd = [SENTINEL_BIN, target, "-p", ports, "--stdout"]
+        
         if protocol.lower() == "udp":
-            cmd.append("-udp")
+            cmd.append("--udp")
+        elif use_syn:
+            cmd.append("--syn")
 
         proc = subprocess.run(
             cmd,
@@ -31,12 +46,42 @@ def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
             timeout=60
         )
 
+        # Se houver erro explícito no stderr, captura para sabermos o que houve
+        if proc.stderr and not proc.stdout.strip():
+            return {
+                "target": target,
+                "engine": "sentinel-rs",
+                "protocol": protocol,
+                "ports_scanned": ports,
+                "open_ports": [],
+                "error": f"Engine Error: {proc.stderr.strip()}"
+            }
+
         if proc.stdout.strip():
             raw = json.loads(proc.stdout.strip())
-            open_ports = [
-                {"port": r["porta"], "service": r["servico"], "status": r["status"]}
-                for r in raw
-            ]
+            open_ports = []
+            for r in raw:
+                port = r.get("port") or r.get("porta")
+                service = r.get("service") or r.get("servico") or "Unknown"
+                status = r.get("status") or "Aberta"
+                
+                if port is not None:
+                    open_ports.append({
+                        "port": int(port),
+                        "service": service,
+                        "status": status
+                    })
+
+            if not open_ports:
+                return {
+                    "target": target,
+                    "engine": "sentinel-rs",
+                    "protocol": protocol,
+                    "ports_scanned": ports,
+                    "open_ports": [],
+                    "error": "Host unreachable or no ports found"
+                }
+
             return {
                 "target": target,
                 "engine": "sentinel-rs",
@@ -54,6 +99,7 @@ def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
                 "open_ports": [],
                 "error": "Host unreachable or no ports found"
             }
+            
     except subprocess.TimeoutExpired:
         return {"target": target, "engine": "sentinel-rs", "protocol": protocol, "ports_scanned": ports, "open_ports": [], "error": "Timeout"}
     except Exception as e:

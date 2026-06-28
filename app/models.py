@@ -1,6 +1,7 @@
 from pydantic import BaseModel, field_validator
 from typing import List, Optional
 import re
+import ipaddress
 
 class UserCreate(BaseModel):
     username: str
@@ -43,19 +44,29 @@ class ScanRequest(BaseModel):
             raise ValueError("A lista de targets não pode ser vazia")
         if len(v) > 10:
             raise ValueError("Máximo de 10 targets por requisição")
-        ip_regex = re.compile(
-            r'^(\d{1,3}\.){3}\d{1,3}$'
-        )
-        hostname_regex = re.compile(
-            r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
-        )
+        
+        targets_limpos = []
         for target in v:
             target = target.strip()
             if not target:
                 raise ValueError("Target não pode ser vazio")
-            if not ip_regex.match(target) and not hostname_regex.match(target):
-                raise ValueError(f"Target inválido: '{target}'. Use um IP ou hostname válido")
-        return [t.strip() for t in v]
+            
+            try:
+                net = ipaddress.ip_network(target, strict=False)
+                
+                if net.version != 4:
+                    raise ValueError(f"O IP '{target}' é IPv6. A API suporta apenas IPv4.")
+                    
+            except ValueError as e:
+                if "IPv6" in str(e):
+                    raise ValueError(str(e))
+                raise ValueError(
+                    f"Alvo inválido: '{target}'. Domínios/Hostnames não são permitidos. "
+                    f"Por favor, use apenas endereços IPv4 válidos (ex: 142.250.218.238 ou 192.168.0.0/24)."
+                )
+                
+            targets_limpos.append(target)
+        return targets_limpos
 
     @field_validator("ports")
     @classmethod
