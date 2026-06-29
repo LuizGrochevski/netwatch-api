@@ -35,7 +35,7 @@ def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
 
 def _execute_sentinel_command(target: str, ports: str, protocol: str, use_syn: bool) -> dict:
     try:
-        cmd = [SENTINEL_BIN, target, "-p", ports, "--stdout"]
+        cmd = [SENTINEL_BIN, target, "-p", ports, "--stdout", "--timeout", "3000"]
         
         if protocol.lower() == "udp":
             cmd.append("--udp")
@@ -67,11 +67,15 @@ def _execute_sentinel_command(target: str, ports: str, protocol: str, use_syn: b
                 port = r.get("port") or r.get("porta")
                 service = r.get("service") or r.get("servico") or "Unknown"
                 status = r.get("status") or "Aberta"
+                produto = r.get("produto") or r.get("product")
+                versao = r.get("versao") or r.get("version")
                 
                 if port is not None:
                     open_ports.append({
                         "port": int(port),
                         "service": service,
+                        "produto": produto,
+                        "versao": versao,
                         "status": status
                     })
 
