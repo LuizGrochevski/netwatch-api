@@ -3,6 +3,38 @@ from datetime import datetime, timedelta, timezone
 
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
+# Mapa de produto detectado -> (vendor, produto_cpe) para montar virtualMatchString.
+# Cobre os produtos mais comuns das assinaturas do Sentinel-RS.
+CPE_VENDOR_MAP = {
+    "openssh": ("openbsd", "openssh"),
+    "nginx": ("nginx", "nginx"),
+    "apache httpd": ("apache", "http_server"),
+    "microsoft iis": ("microsoft", "internet_information_server"),
+    "mysql": ("mysql", "mysql"),
+    "mariadb": ("mariadb", "mariadb"),
+    "postgresql": ("postgresql", "postgresql"),
+    "mongodb": ("mongodb", "mongodb"),
+    "redis": ("redis", "redis"),
+    "vsftpd": ("vsftpd_project", "vsftpd"),
+    "proftpd": ("proftpd", "proftpd"),
+    "postfix smtp": ("postfix", "postfix"),
+    "dovecot": ("dovecot", "dovecot"),
+    "haproxy": ("haproxy", "haproxy"),
+    "wordpress": ("wordpress", "wordpress"),
+}
+
+
+def _montar_cpe(produto: str, versao: str) -> str | None:
+    """Monta virtualMatchString CPE 2.3 a partir do nome de produto detectado."""
+    chave = produto.strip().lower()
+    if chave not in CPE_VENDOR_MAP:
+        return None
+    vendor, nome_cpe = CPE_VENDOR_MAP[chave]
+    versao_limpa = versao.strip().split()[0] if versao else ""
+    if not versao_limpa:
+        return None
+    return f"cpe:2.3:a:{vendor}:{nome_cpe}:{versao_limpa}"
+
 
 def _get_severity(cve: dict) -> str:
     metrics = cve.get("metrics", {})
@@ -22,6 +54,16 @@ def _get_severity(cve: dict) -> str:
             if score > 0:
                 return "LOW"
     return "N/A"
+
+
+def _formatar_cve(cve: dict) -> dict:
+    desc = next((d["value"] for d in cve["descriptions"] if d["lang"] == "en"), "")
+    return {
+        "id": cve["id"],
+        "published": cve["published"][:10],
+        "severity": _get_severity(cve),
+        "description": desc,
+    }
 
 
 def _tem_versao_especifica(keyword: str) -> bool:
@@ -46,6 +88,30 @@ def search_cves(keyword: str, limit: int = 10, days: int = 119) -> list[dict]:
     histórico completo de CVEs daquele produto para o usuário avaliar manualmente.
     """
     tem_versao = _tem_versao_especifica(keyword)
+
+    # 1. Tenta busca precisa por CPE quando há produto+versao reconhecidos
+    if tem_versao:
+        partes = keyword.split(maxsplit=1)
+        produto, versao = partes[0], partes[1]
+        cpe = _montar_cpe(produto, versao)
+        if cpe:
+            try:
+                r = requests.get(
+                    NVD_API,
+                    params={"virtualMatchString": cpe, "resultsPerPage": 50},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                data = r.json()
+                if data.get("totalResults", 0) > 0:
+                    vulns = data.get("vulnerabilities", [])
+                    vulns.sort(key=lambda v: v["cve"]["published"], reverse=True)
+                    vulns = vulns[:limit]
+                    return [_formatar_cve(item["cve"]) for item in vulns]
+            except requests.RequestException:
+                pass  # cai para o fallback abaixo
+
+    # 2. Fallback: busca por keyword (produto isolado se houver versão, ou termo genérico)
     termo_busca = keyword.split()[0] if tem_versao else keyword
 
     params = {
@@ -70,17 +136,7 @@ def search_cves(keyword: str, limit: int = 10, days: int = 119) -> list[dict]:
     vulns.sort(key=lambda v: v["cve"]["published"], reverse=True)
     vulns = vulns[:limit]
 
-    output = []
-    for item in vulns:
-        cve = item["cve"]
-        desc = next((d["value"] for d in cve["descriptions"] if d["lang"] == "en"), "")
-        output.append({
-            "id": cve["id"],
-            "published": cve["published"][:10],
-            "severity": _get_severity(cve),
-            "description": desc,
-        })
-    return output
+    return [_formatar_cve(item["cve"]) for item in vulns]
 
 
 def extract_services(scan_results: list[dict]) -> list[str]:
