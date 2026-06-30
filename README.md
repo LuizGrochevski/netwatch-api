@@ -67,6 +67,18 @@ JSON / CSV / Markdown
 
 ---
 
+## 🧠 Decisões Técnicas
+
+### CPE matching vs. busca por keyword na consulta de CVEs
+
+O endpoint `/cves` consulta a NVD para cruzar serviços detectados pelo Sentinel-RS com vulnerabilidades conhecidas. A abordagem ingênua — mandar `"nginx 1.18.0"` como texto livre via `keywordSearch` — é imprecisa: a NVD faz matching textual solto contra a descrição da CVE, gerando falsos negativos (a versão raramente aparece literal na descrição) e falsos positivos (produtos com nome parecido).
+
+A correção foi usar `virtualMatchString` com notação **CPE 2.3** (`cpe:2.3:a:vendor:produto:versao`), que consulta a lista oficial de "configurações afetadas" que o NIST mantém por CVE — o dado mais confiável que eles publicam, em vez do texto livre da descrição. Isso exige traduzir o nome detectado pelo Sentinel-RS (ex: `"OpenSSH"`) para o par `vendor/produto` correto do CPE (ex: `openbsd/openssh` — nem sempre óbvio, já que o vendor frequentemente difere do nome do produto).
+
+A implementação usa um dicionário de mapeamento para os produtos mais comuns das assinaturas do Sentinel-RS, com fallback automático para `keywordSearch` quando o produto não está mapeado ou a busca CPE não retorna resultado. Resultado prático: CVEs relevantes de OpenSSH 6.6.1p1 passaram de buscas genéricas e desatualizadas para resultados específicos da faixa de versão afetada.
+
+---
+
 ## ⚙️ Instalação
 
 ### Pré-requisitos
