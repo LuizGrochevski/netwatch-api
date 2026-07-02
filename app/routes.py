@@ -168,6 +168,22 @@ def get_me(current_user: dict = Depends(get_current_user)):
         "created_at": current_user["created_at"]
     }
 
+# --- TRAPRS WEBHOOK ---
+
+@router.post("/webhook/alert", status_code=200)
+def receive_traprs_alert(payload: dict):
+    import json
+    from datetime import datetime
+    log_line = {
+        "received_at": datetime.utcnow().isoformat(),
+        "src_ip": payload.get("src_ip"),
+        "event_count": payload.get("event_count"),
+        "window_secs": payload.get("window_secs"),
+        "protocol": payload.get("protocol"),
+    }
+    print(f"[TrapRS ALERT] {json.dumps(log_line)}")
+    return {"status": "ok", "message": "Alerta recebido"}
+
 # --- CVE LOOKUP ---
 
 @router.get("/cves")
