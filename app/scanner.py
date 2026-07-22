@@ -1,12 +1,15 @@
 import subprocess
 import json
 import os
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import os
-
-SENTINEL_BIN = os.environ.get("SENTINEL_BIN_PATH", "/usr/local/bin/sentinel-rs")
+SENTINEL_BIN = os.environ.get(
+    "SENTINEL_BIN_PATH",
+    str(Path.home() / "sentinel-rs" / "target" / "release" / "sentinel-rs")
+)
 DEFAULT_PORTS = "21,22,23,25,53,80,443,3306,5432,6379,8080"
+
 
 def run_sentinel(targets: list, ports: str = DEFAULT_PORTS, protocol: str = "tcp") -> list:
     if len(targets) == 1:
@@ -20,10 +23,11 @@ def run_sentinel(targets: list, ports: str = DEFAULT_PORTS, protocol: str = "tcp
             results[idx] = future.result()
     return results
 
+
 def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
     # 1. Tenta rodar com performance máxima usando SYN Scan
     result = _execute_sentinel_command(target, ports, protocol, use_syn=True)
-    
+
     # 2. Fallback: Se o SYN scan não achou nenhuma porta aberta (qualquer motivo: erro,
     #    permissão, ping/host discovery falho), tenta o Connect Scan clássico via TCP.
     if protocol.lower() == "tcp" and not result.get("open_ports"):
@@ -33,10 +37,22 @@ def _scan_target(target: str, ports: str, protocol: str = "tcp") -> dict:
 
     return result
 
+
 def _execute_sentinel_command(target: str, ports: str, protocol: str, use_syn: bool) -> dict:
+    if not os.path.isfile(SENTINEL_BIN):
+        return {
+            "target": target,
+            "engine": "sentinel-rs",
+            "protocol": protocol,
+            "ports_scanned": ports,
+            "open_ports": [],
+            "error": f"Sentinel-RS binary not found at {SENTINEL_BIN}. "
+                     f"Set SENTINEL_BIN_PATH or build it there."
+        }
+
     try:
         cmd = [SENTINEL_BIN, target, "-p", ports, "--stdout", "--timeout", "3000"]
-        
+
         if protocol.lower() == "udp":
             cmd.append("--udp")
         elif use_syn:
@@ -69,7 +85,7 @@ def _execute_sentinel_command(target: str, ports: str, protocol: str, use_syn: b
                 status = r.get("status") or "Aberta"
                 produto = r.get("produto") or r.get("product")
                 versao = r.get("versao") or r.get("version")
-                
+
                 if port is not None:
                     open_ports.append({
                         "port": int(port),
@@ -106,7 +122,7 @@ def _execute_sentinel_command(target: str, ports: str, protocol: str, use_syn: b
                 "open_ports": [],
                 "error": "Host unreachable or no ports found"
             }
-            
+
     except subprocess.TimeoutExpired:
         return {"target": target, "engine": "sentinel-rs", "protocol": protocol, "ports_scanned": ports, "open_ports": [], "error": "Timeout"}
     except Exception as e:
