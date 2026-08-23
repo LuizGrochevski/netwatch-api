@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from app.models import UserCreate, Token, ScanRequest
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 from app.database import get_connection, save_scan_results, load_scan_results
-from app.scanner import run_sentinel
+from app.queue import enqueue_scan
 from app.cve import search_cves, extract_services
 import json
 from datetime import datetime
@@ -39,24 +39,36 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 @router.post("/scan", status_code=202)
 def create_scan(scan: ScanRequest, current_user: dict = Depends(get_current_user)):
-    results = run_sentinel(scan.targets, scan.ports, scan.protocol)
     conn = get_connection()
     cursor = conn.execute(
-        "INSERT INTO scans (user_id, targets, status, ports, protocol, results) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO scans (user_id, targets, status, ports, protocol) VALUES (?, ?, ?, ?, ?)",
         (
             current_user["id"],
             json.dumps(scan.targets),
-            "completed",
+            "pending",
             scan.ports,
             scan.protocol,
-            json.dumps(results),
         ),
     )
     scan_id = cursor.lastrowid
-    save_scan_results(conn, scan_id, results)
     conn.commit()
     conn.close()
-    return {"id": scan_id, "status": "completed", "results": results}
+
+    try:
+        job_id = enqueue_scan(scan_id, scan.targets, scan.ports, scan.protocol)
+    except Exception as e:
+        conn = get_connection()
+        conn.execute("UPDATE scans SET status = ? WHERE id = ?", ("failed", scan_id))
+        conn.commit()
+        conn.close()
+        raise HTTPException(status_code=503, detail=f"Fila indisponível: {e}")
+
+    return {
+        "id": scan_id,
+        "status": "pending",
+        "job_id": job_id,
+        "message": "Scan enfileirado. Consulte GET /scan/{id} para status.",
+    }
 
 @router.get("/scan/{scan_id}")
 def get_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
