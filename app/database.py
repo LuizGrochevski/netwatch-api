@@ -75,10 +75,23 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            src_ip TEXT,
+            event_count INTEGER,
+            window_secs INTEGER,
+            protocol TEXT,
+            payload TEXT,
+            received_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_host_results_scan ON host_results(scan_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_open_ports_host ON open_ports(host_result_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cve_cache_keyword ON cve_cache(keyword)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_received ON alerts(received_at DESC)")
 
     conn.commit()
     conn.close()
