@@ -10,6 +10,73 @@ def get_connection():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+def _column_exists(cursor, table: str, column: str) -> bool:
+    cursor.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in cursor.fetchall())
+
+def migrate(conn):
+    """Adiciona colunas/tabelas faltantes em DBs antigos."""
+    cursor = conn.cursor()
+
+    if not _column_exists(cursor, "scans", "ports"):
+        cursor.execute("ALTER TABLE scans ADD COLUMN ports TEXT")
+    if not _column_exists(cursor, "scans", "protocol"):
+        cursor.execute("ALTER TABLE scans ADD COLUMN protocol TEXT DEFAULT 'tcp'")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS host_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id INTEGER NOT NULL,
+            target TEXT NOT NULL,
+            protocol TEXT DEFAULT 'tcp',
+            ports_scanned TEXT,
+            error TEXT,
+            FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS open_ports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_result_id INTEGER NOT NULL,
+            port INTEGER NOT NULL,
+            service TEXT,
+            produto TEXT,
+            versao TEXT,
+            status TEXT,
+            FOREIGN KEY (host_result_id) REFERENCES host_results(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cve_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyword TEXT NOT NULL,
+            cve_id TEXT NOT NULL,
+            severity TEXT,
+            published TEXT,
+            description TEXT,
+            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(keyword, cve_id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            src_ip TEXT,
+            event_count INTEGER,
+            window_secs INTEGER,
+            protocol TEXT,
+            payload TEXT,
+            received_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_host_results_scan ON host_results(scan_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_open_ports_host ON open_ports(host_result_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cve_cache_keyword ON cve_cache(keyword)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_received ON alerts(received_at DESC)")
+    conn.commit()
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
@@ -37,63 +104,8 @@ def init_db():
         )
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS host_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scan_id INTEGER NOT NULL,
-            target TEXT NOT NULL,
-            protocol TEXT DEFAULT 'tcp',
-            ports_scanned TEXT,
-            error TEXT,
-            FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS open_ports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            host_result_id INTEGER NOT NULL,
-            port INTEGER NOT NULL,
-            service TEXT,
-            produto TEXT,
-            versao TEXT,
-            status TEXT,
-            FOREIGN KEY (host_result_id) REFERENCES host_results(id) ON DELETE CASCADE
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS cve_cache (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            keyword TEXT NOT NULL,
-            cve_id TEXT NOT NULL,
-            severity TEXT,
-            published TEXT,
-            description TEXT,
-            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(keyword, cve_id)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            src_ip TEXT,
-            event_count INTEGER,
-            window_secs INTEGER,
-            protocol TEXT,
-            payload TEXT,
-            received_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_host_results_scan ON host_results(scan_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_open_ports_host ON open_ports(host_result_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cve_cache_keyword ON cve_cache(keyword)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_received ON alerts(received_at DESC)")
-
     conn.commit()
+    migrate(conn)
     conn.close()
 
 
