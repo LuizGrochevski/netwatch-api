@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from app.models import UserCreate, Token, ScanRequest
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
-from app.database import get_connection
+from app.database import get_connection, save_scan_results, load_scan_results
 from app.scanner import run_sentinel
 from app.cve import search_cves, extract_services
 import json
@@ -41,10 +41,18 @@ def create_scan(scan: ScanRequest, current_user: dict = Depends(get_current_user
     results = run_sentinel(scan.targets, scan.ports, scan.protocol)
     conn = get_connection()
     cursor = conn.execute(
-        "INSERT INTO scans (user_id, targets, status, results) VALUES (?, ?, ?, ?)",
-        (current_user["id"], json.dumps(scan.targets), "completed", json.dumps(results))
+        "INSERT INTO scans (user_id, targets, status, ports, protocol, results) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            current_user["id"],
+            json.dumps(scan.targets),
+            "completed",
+            scan.ports,
+            scan.protocol,
+            json.dumps(results),  # legado / backup
+        ),
     )
     scan_id = cursor.lastrowid
+    save_scan_results(conn, scan_id, results)
     conn.commit()
     conn.close()
     return {"id": scan_id, "status": "completed", "results": results}
@@ -56,14 +64,16 @@ def get_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
         "SELECT * FROM scans WHERE id = ? AND user_id = ?",
         (scan_id, current_user["id"])
     ).fetchone()
-    conn.close()
     if not scan:
+        conn.close()
         raise HTTPException(status_code=404, detail="Scan não encontrado")
+    results = load_scan_results(conn, scan_id)
+    conn.close()
     return {
         "id": scan["id"],
         "targets": json.loads(scan["targets"]),
         "status": scan["status"],
-        "results": json.loads(scan["results"]),
+        "results": results,
         "created_at": scan["created_at"]
     }
 
@@ -77,6 +87,7 @@ def delete_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
     if not scan:
         conn.close()
         raise HTTPException(status_code=404, detail="Scan não encontrado")
+    # CASCADE apaga host_results e open_ports
     conn.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
     conn.commit()
     conn.close()
@@ -89,11 +100,12 @@ def get_scan_report(scan_id: int, format: str = "json", current_user: dict = Dep
         "SELECT * FROM scans WHERE id = ? AND user_id = ?",
         (scan_id, current_user["id"])
     ).fetchone()
-    conn.close()
     if not scan:
+        conn.close()
         raise HTTPException(status_code=404, detail="Scan não encontrado")
 
-    results = json.loads(scan["results"])
+    results = load_scan_results(conn, scan_id)
+    conn.close()
 
     if format == "csv":
         lines = ["target,port,service,status,protocol,error"]
@@ -172,7 +184,6 @@ def get_me(current_user: dict = Depends(get_current_user)):
 
 @router.post("/webhook/alert", status_code=200)
 def receive_traprs_alert(payload: dict):
-    import json
     from datetime import datetime
     log_line = {
         "received_at": datetime.utcnow().isoformat(),
@@ -207,11 +218,13 @@ def get_scan_cves(
         "SELECT * FROM scans WHERE id = ? AND user_id = ?",
         (scan_id, current_user["id"])
     ).fetchone()
-    conn.close()
     if not scan:
+        conn.close()
         raise HTTPException(status_code=404, detail="Scan não encontrado")
 
-    results = json.loads(scan["results"])
+    results = load_scan_results(conn, scan_id)
+    conn.close()
+
     services = extract_services(results)
 
     if not services:
