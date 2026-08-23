@@ -1,4 +1,10 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   netwatch-api:
     build: .
     network_mode: "host"
@@ -10,7 +16,29 @@ services:
       - /home/luiz-felipe/Documentos/projetos/Sentinel-RS/target/release/sentinel-rs:/usr/local/bin/sentinel-rs
     env_file:
       - .env
+    environment:
+      - REDIS_URL=redis://localhost:6379/0
     cap_add:
       - NET_RAW
       - NET_ADMIN
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker:
+    build: .
+    network_mode: "host"
+    command: rq worker scans --url redis://localhost:6379/0
+    volumes:
+      - ./netwatch.db:/app/netwatch.db
+      - /home/luiz-felipe/Documentos/projetos/Sentinel-RS/target/release/sentinel-rs:/usr/local/bin/sentinel-rs
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://localhost:6379/0
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    depends_on:
+      - redis
     restart: unless-stopped
