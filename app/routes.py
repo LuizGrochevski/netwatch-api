@@ -6,6 +6,7 @@ from app.database import get_connection, save_scan_results, load_scan_results
 from app.scanner import run_sentinel
 from app.cve import search_cves, extract_services
 import json
+from datetime import datetime
 
 router = APIRouter()
 
@@ -48,7 +49,7 @@ def create_scan(scan: ScanRequest, current_user: dict = Depends(get_current_user
             "completed",
             scan.ports,
             scan.protocol,
-            json.dumps(results),  # legado / backup
+            json.dumps(results),
         ),
     )
     scan_id = cursor.lastrowid
@@ -87,7 +88,6 @@ def delete_scan(scan_id: int, current_user: dict = Depends(get_current_user)):
     if not scan:
         conn.close()
         raise HTTPException(status_code=404, detail="Scan não encontrado")
-    # CASCADE apaga host_results e open_ports
     conn.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
     conn.commit()
     conn.close()
@@ -180,20 +180,62 @@ def get_me(current_user: dict = Depends(get_current_user)):
         "created_at": current_user["created_at"]
     }
 
-# --- TRAPRS WEBHOOK ---
+# --- TRAPRS ALERTS ---
 
 @router.post("/webhook/alert", status_code=200)
 def receive_traprs_alert(payload: dict):
-    from datetime import datetime
-    log_line = {
-        "received_at": datetime.utcnow().isoformat(),
-        "src_ip": payload.get("src_ip"),
-        "event_count": payload.get("event_count"),
-        "window_secs": payload.get("window_secs"),
-        "protocol": payload.get("protocol"),
+    received_at = datetime.utcnow().isoformat()
+    src_ip = payload.get("src_ip")
+    event_count = payload.get("event_count")
+    window_secs = payload.get("window_secs")
+    protocol = payload.get("protocol")
+
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO alerts (src_ip, event_count, window_secs, protocol, payload, received_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (src_ip, event_count, window_secs, protocol, json.dumps(payload), received_at),
+    )
+    alert_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    print(f"[TrapRS ALERT] id={alert_id} src={src_ip} count={event_count} proto={protocol}")
+    return {"status": "ok", "id": alert_id, "message": "Alerta recebido"}
+
+
+@router.get("/alerts")
+def list_alerts(
+    current_user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+):
+    offset = (page - 1) * limit
+    conn = get_connection()
+    total = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+    rows = conn.execute(
+        """SELECT id, src_ip, event_count, window_secs, protocol, received_at
+           FROM alerts ORDER BY received_at DESC LIMIT ? OFFSET ?""",
+        (limit, offset),
+    ).fetchall()
+    conn.close()
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "pages": (total + limit - 1) // limit if total else 0,
+        "data": [
+            {
+                "id": r["id"],
+                "src_ip": r["src_ip"],
+                "event_count": r["event_count"],
+                "window_secs": r["window_secs"],
+                "protocol": r["protocol"],
+                "received_at": r["received_at"],
+            }
+            for r in rows
+        ],
     }
-    print(f"[TrapRS ALERT] {json.dumps(log_line)}")
-    return {"status": "ok", "message": "Alerta recebido"}
 
 # --- CVE LOOKUP ---
 
